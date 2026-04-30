@@ -53,7 +53,7 @@ export function WatermarkPanel({
   const isActive = !!watermark;
 
   return (
-    <div className={`flex flex-col gap-4 ${disabled ? "opacity-50 pointer-events-none" : ""}`}>
+    <div className={`flex flex-col gap-4 min-w-0 overflow-hidden ${disabled ? "opacity-50 pointer-events-none" : ""}`}>
       {/* If watermark is active, show live controls */}
       {isActive ? (
         <>
@@ -87,7 +87,7 @@ export function WatermarkPanel({
               <div className="w-10 h-10 flex items-center justify-center rounded bg-white border border-zinc-100">
                 <Type className="w-5 h-5 text-zinc-400" />
               </div>
-              <p className="text-xs text-zinc-500">&ldquo;{watermark.config.text}&rdquo;</p>
+              <p className="text-xs text-zinc-500 truncate">&ldquo;{watermark.config.text}&rdquo;</p>
             </div>
           )}
 
@@ -131,7 +131,7 @@ export function WatermarkPanel({
             />
           </div>
 
-          <p className="text-[11px] text-zinc-400">
+          <p className="text-[11px] text-zinc-400 break-words">
             Drag on canvas to reposition. Press Delete to remove.
           </p>
         </>

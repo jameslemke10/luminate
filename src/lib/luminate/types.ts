@@ -6,6 +6,9 @@ export interface EditParams {
   saturation?: number; // -100 to 100
   sharpness?: number; // 0 to 100
   warmth?: number; // -100 to 100
+  exposure?: number; // -100 to 100 (gamma curve)
+  highlights?: number; // -100 to 100
+  shadows?: number; // -100 to 100
   rotation?: number; // degrees
   flipX?: boolean;
   flipY?: boolean;
@@ -57,7 +60,21 @@ export const DEFAULT_EDIT_PARAMS: EditParams = {
   saturation: 0,
   sharpness: 0,
   warmth: 0,
+  exposure: 0,
+  highlights: 0,
+  shadows: 0,
   rotation: 0,
   flipX: false,
   flipY: false,
 };
+
+// Logo placement for the agent's add_logo tool
+export interface LogoPlacement {
+  imageBase64: string;
+  mimeType: string;
+  position: "top-left" | "top-right" | "bottom-left" | "bottom-right" | "center";
+  xPercent: number;
+  yPercent: number;
+  scale: number; // 0.03 to 0.5
+  opacity: number; // 0 to 1
+}

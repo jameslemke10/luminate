@@ -196,6 +196,34 @@ export function Toolbar({
           onChange={(v) => onUpdateParams({ warmth: v })}
           disabled={disabled}
         />
+
+        <h3 className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider mt-2">
+          Tone
+        </h3>
+        <SliderControl
+          label="Exposure"
+          value={params.exposure ?? 0}
+          min={-100}
+          max={100}
+          onChange={(v) => onUpdateParams({ exposure: v })}
+          disabled={disabled}
+        />
+        <SliderControl
+          label="Highlights"
+          value={params.highlights ?? 0}
+          min={-100}
+          max={100}
+          onChange={(v) => onUpdateParams({ highlights: v })}
+          disabled={disabled}
+        />
+        <SliderControl
+          label="Shadows"
+          value={params.shadows ?? 0}
+          min={-100}
+          max={100}
+          onChange={(v) => onUpdateParams({ shadows: v })}
+          disabled={disabled}
+        />
       </div>
     </div>
   );
