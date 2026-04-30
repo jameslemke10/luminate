@@ -12,11 +12,11 @@ import {
   Plus,
   Eye,
   GripVertical,
-  LayoutGrid,
+  Upload,
 } from "lucide-react";
 import { useEditorState } from "../hooks/useEditorState";
 import { AIEditResponse, EditParams, WatermarkOverlay } from "../types";
-import { HomeScreen } from "./HomeScreen";
+import { AgentEvent } from "../agent/types";
 import { Canvas, CanvasHandle } from "./Canvas";
 import { Toolbar } from "./Toolbar";
 import { AIChat } from "./AIChat";
@@ -44,7 +44,7 @@ export function LuminateEditor({
   const canvasRef = useRef<CanvasHandle>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const {
-    state, setImage, clearImage, updateParams, setParams, undo, redo, reset, setProcessing, setBackgroundRemoved,
+    state, setImage, updateParams, setParams, undo, redo, reset, setProcessing, setBackgroundRemoved,
   } = useEditorState();
 
   const [activeTab, setActiveTab] = useState<Tab>("ai");
@@ -55,11 +55,14 @@ export function LuminateEditor({
   const [watermark, setWatermark] = useState<WatermarkOverlay | null>(null);
   const [cropMode, setCropMode] = useState(false);
   const [showOriginal, setShowOriginal] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
 
-  // Image sessions (history)
+  // Image sessions (multi-photo)
   const [sessions, setSessions] = useState<ImageSession[]>([]);
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
 
-  const [sidebarWidth, setSidebarWidth] = useState(320);
+  const [agentSteps, setAgentSteps] = useState<AgentEvent[]>([]);
+  const [sidebarWidth, setSidebarWidth] = useState(400);
   const [isResizing, setIsResizing] = useState(false);
   const resizeRef = useRef<{ startX: number; startWidth: number } | null>(null);
 
@@ -90,7 +93,6 @@ export function LuminateEditor({
     return () => { window.removeEventListener("mousemove", handleMove); window.removeEventListener("mouseup", handleUp); };
   }, [isResizing]);
 
-  // Generate thumbnail from data URL
   const makeThumbnail = useCallback((dataUrl: string): Promise<string> => {
     return new Promise((resolve) => {
       const img = new Image();
@@ -111,41 +113,71 @@ export function LuminateEditor({
 
   const resetEditorState = useCallback(() => {
     setBgRemovedSrc(null); setWatermark(null); setCropMode(false); setShowOriginal(false);
-    setLastExplanation(undefined); setLastAIParams(null); setPreAIParams(null);
+    setLastExplanation(undefined); setLastAIParams(null); setPreAIParams(null); setAgentSteps([]);
   }, []);
 
+  // Load a single image and add it to sessions
   const handleLoadImage = useCallback(
     async (dataUrl: string) => {
-      // Save current image to history if exists
-      if (state.originalImage) {
-        const thumb = await makeThumbnail(state.originalImage);
-        setSessions((prev) => {
-          const existing = prev.find((s) => s.originalImage === state.originalImage);
-          if (existing) return prev;
-          return [...prev, { id: crypto.randomUUID(), thumbnail: thumb, originalImage: state.originalImage!, timestamp: Date.now() }];
-        });
-      }
+      const thumb = await makeThumbnail(dataUrl);
+      const id = crypto.randomUUID();
+      setSessions((prev) => [...prev, { id, thumbnail: thumb, originalImage: dataUrl, timestamp: Date.now() }]);
+      setActiveSessionId(id);
       setImage(dataUrl);
       resetEditorState();
     },
-    [state.originalImage, setImage, makeThumbnail, resetEditorState]
+    [setImage, makeThumbnail, resetEditorState]
   );
 
-  const handleRestoreSession = useCallback(
-    async (session: ImageSession) => {
-      // Save current to history first
-      if (state.originalImage && state.originalImage !== session.originalImage) {
-        const thumb = await makeThumbnail(state.originalImage);
-        setSessions((prev) => {
-          const existing = prev.find((s) => s.originalImage === state.originalImage);
-          if (existing) return prev;
-          return [...prev, { id: crypto.randomUUID(), thumbnail: thumb, originalImage: state.originalImage!, timestamp: Date.now() }];
-        });
-      }
+  // Load multiple files at once
+  const handleFiles = useCallback(
+    (files: FileList | File[]) => {
+      const fileArr = Array.from(files).filter((f) => f.type.startsWith("image/"));
+      if (fileArr.length === 0) return;
+      // Load the first one immediately, queue the rest
+      fileArr.forEach((file, idx) => {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          if (e.target?.result) {
+            const dataUrl = e.target.result as string;
+            if (idx === 0) {
+              handleLoadImage(dataUrl);
+            } else {
+              // Add to sessions only
+              makeThumbnail(dataUrl).then((thumb) => {
+                setSessions((prev) => [...prev, {
+                  id: crypto.randomUUID(),
+                  thumbnail: thumb,
+                  originalImage: dataUrl,
+                  timestamp: Date.now(),
+                }]);
+              });
+            }
+          }
+        };
+        reader.readAsDataURL(file);
+      });
+    },
+    [handleLoadImage, makeThumbnail]
+  );
+
+  const handleSwitchSession = useCallback(
+    (session: ImageSession) => {
+      if (session.id === activeSessionId) return;
+      setActiveSessionId(session.id);
       setImage(session.originalImage);
       resetEditorState();
     },
-    [state.originalImage, setImage, makeThumbnail, resetEditorState]
+    [activeSessionId, setImage, resetEditorState]
+  );
+
+  const handleDrop = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault();
+      setIsDragging(false);
+      if (e.dataTransfer.files.length > 0) handleFiles(e.dataTransfer.files);
+    },
+    [handleFiles]
   );
 
   const handleAIEdit = useCallback(
@@ -168,26 +200,83 @@ export function LuminateEditor({
     [state.originalImage, state.currentParams, apiEndpoint, setParams, setProcessing]
   );
 
-  const handleMatchTemplate = useCallback(
-    async (referenceDataUrl: string) => {
+  const handleAgentEdit = useCallback(
+    async (instruction: string, logoBase64?: string, logoMimeType?: string) => {
       if (!state.originalImage) return;
-      setProcessing(true); setLastExplanation(undefined);
-      setPreAIParams({ ...state.currentParams }); setLastAIParams(null);
+      setProcessing(true);
+      setAgentSteps([]);
+      setLastExplanation(undefined);
+      setPreAIParams({ ...state.currentParams });
+      setLastAIParams(null);
+
       try {
-        const tm = state.originalImage.match(/^data:(image\/\w+);base64,(.+)$/);
-        const rm = referenceDataUrl.match(/^data:(image\/\w+);base64,(.+)$/);
-        if (!tm || !rm) throw new Error("Invalid image data");
-        const [, mimeType, imageBase64] = tm;
-        const [, referenceMimeType, referenceBase64] = rm;
-        const res = await fetch(apiEndpoint, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ imageBase64, mimeType, referenceBase64, referenceMimeType }) });
-        if (!res.ok) { const err = await res.json(); throw new Error(err.error || "Template match failed"); }
-        const result: AIEditResponse = await res.json();
-        setParams(result.params); setLastAIParams(result.params); setLastExplanation(result.explanation);
+        const match = state.originalImage.match(/^data:(image\/\w+);base64,(.+)$/);
+        if (!match) throw new Error("Invalid image data");
+        const [, mimeType, imageBase64] = match;
+
+        const res = await fetch("/api/agent-edit", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            imageBase64, mimeType, instruction,
+            currentParams: state.currentParams,
+            logoImageBase64: logoBase64, logoMimeType,
+          }),
+        });
+
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.error || "Agent request failed");
+        }
+
+        const reader = res.body?.getReader();
+        if (!reader) throw new Error("No response stream");
+
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n\n");
+          buffer = lines.pop() ?? "";
+
+          for (const line of lines) {
+            if (!line.startsWith("data: ")) continue;
+            const json = line.slice(6);
+            try {
+              const event: AgentEvent = JSON.parse(json);
+              setAgentSteps((prev) => [...prev, event]);
+
+              if (event.type === "params_update" && event.currentParams) {
+                setParams(event.currentParams);
+                setLastAIParams(event.currentParams);
+              }
+              if (event.type === "logo_update" && event.logoPlacement) {
+                const lp = event.logoPlacement;
+                setWatermark({
+                  config: {
+                    imageUrl: `data:${lp.mimeType};base64,${lp.imageBase64}`,
+                    opacity: lp.opacity, scale: lp.scale,
+                  },
+                  xPercent: lp.xPercent, yPercent: lp.yPercent,
+                });
+              }
+              if (event.type === "complete") setLastExplanation(event.explanation);
+              if (event.type === "error") setLastExplanation(`Error: ${event.error}`);
+            } catch { /* skip malformed */ }
+          }
+        }
       } catch (error) {
         setLastExplanation(`Error: ${error instanceof Error ? error.message : "Failed"}`);
-      } finally { setProcessing(false); }
+        setAgentSteps((prev) => [...prev, { type: "error", error: error instanceof Error ? error.message : "Failed" }]);
+      } finally {
+        setProcessing(false);
+      }
     },
-    [state.originalImage, state.currentParams, apiEndpoint, setParams, setProcessing]
+    [state.originalImage, state.currentParams, setParams, setProcessing]
   );
 
   const handleExport = useCallback(() => {
@@ -225,7 +314,6 @@ export function LuminateEditor({
 
   const handleReset = useCallback(() => { reset(); resetEditorState(); }, [reset, resetEditorState]);
 
-  // Crop now receives a data URL directly from the canvas
   const handleCropComplete = useCallback(
     (croppedDataUrl: string) => {
       setImage(croppedDataUrl);
@@ -235,82 +323,92 @@ export function LuminateEditor({
     [setImage]
   );
 
-  const handleGoHome = useCallback(async () => {
-    if (state.originalImage) {
-      const thumb = await makeThumbnail(state.originalImage);
-      setSessions((prev) => {
-        if (prev.find((s) => s.originalImage === state.originalImage)) return prev;
-        return [...prev, { id: crypto.randomUUID(), thumbnail: thumb, originalImage: state.originalImage!, timestamp: Date.now() }];
-      });
-    }
-    clearImage();
-    resetEditorState();
-  }, [state.originalImage, clearImage, makeThumbnail, resetEditorState]);
-
   const tabs: { id: Tab; label: string; icon: React.ReactNode }[] = [
     { id: "ai", label: "AI", icon: <Sparkles className="w-4 h-4" /> },
     { id: "adjust", label: "Adjust", icon: <SlidersHorizontal className="w-4 h-4" /> },
     { id: "watermark", label: "Watermark", icon: <Stamp className="w-4 h-4" /> },
   ];
 
-  if (!hasImage) {
-    return (
-      <HomeScreen
-        onImageLoad={handleLoadImage}
-        sessions={sessions}
-        onRestoreSession={handleRestoreSession}
-      />
-    );
-  }
-
   return (
-    <div className="flex h-full select-none">
-      <input ref={fileInputRef} type="file" accept="image/*" className="hidden"
-        onChange={(e) => { const f = e.target.files?.[0]; if (f) { const r = new FileReader(); r.onload = (ev) => { if (ev.target?.result) handleLoadImage(ev.target.result as string); }; r.readAsDataURL(f); } }} />
+    <div className="flex h-full">
+      <input ref={fileInputRef} type="file" accept="image/*" multiple className="hidden"
+        onChange={(e) => { if (e.target.files && e.target.files.length > 0) handleFiles(e.target.files); e.target.value = ""; }} />
 
-      {/* Canvas area */}
-      <div className="flex-1 flex flex-col min-w-0 p-4">
-        <div className="flex-1 relative">
-          <Canvas
-            ref={canvasRef}
-            imageSrc={state.originalImage}
-            params={state.currentParams}
-            backgroundRemovedSrc={bgRemovedSrc}
-            cropMode={cropMode}
-            onCropComplete={handleCropComplete}
-            onCropCancel={() => setCropMode(false)}
-            showOriginal={showOriginal}
-            watermark={watermark}
-            onWatermarkMove={handleWatermarkMove}
-            watermarkSelected={activeTab === "watermark" && !!watermark}
-          />
-          <div className="absolute top-2 right-2 flex items-center gap-1">
-            <button
-              onMouseDown={() => setShowOriginal(true)}
-              onMouseUp={() => setShowOriginal(false)}
-              onMouseLeave={() => setShowOriginal(false)}
-              className={`p-2 rounded-lg shadow-sm border transition-colors ${showOriginal ? "bg-blue-600 border-blue-600 text-white" : "bg-white/90 border-zinc-200 text-zinc-500 hover:text-zinc-700 hover:bg-white"}`}
-              title="Hold to see original"
-            >
-              <Eye className="w-4 h-4" />
-            </button>
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              className="p-2 rounded-lg shadow-sm border bg-white/90 border-zinc-200 text-zinc-500 hover:text-zinc-700 hover:bg-white transition-colors"
-              title="New image"
-            >
+      {/* Left area: canvas or upload */}
+      <div className="flex-1 flex flex-col min-w-0">
+        {/* Photo strip - shown when there are multiple sessions */}
+        {sessions.length > 1 && (
+          <div className="flex items-center gap-2 px-4 pt-3 pb-1 overflow-x-auto">
+            {sessions.map((s) => (
+              <button key={s.id} onClick={() => handleSwitchSession(s)}
+                className={`shrink-0 w-12 h-12 rounded-lg overflow-hidden border-2 transition-all ${
+                  s.id === activeSessionId ? "border-blue-500 shadow-md" : "border-zinc-200 hover:border-zinc-400 opacity-70 hover:opacity-100"
+                }`}>
+                <img src={s.thumbnail} alt="" className="w-full h-full object-cover" />
+              </button>
+            ))}
+            <button onClick={() => fileInputRef.current?.click()}
+              className="shrink-0 w-12 h-12 rounded-lg border-2 border-dashed border-zinc-300 hover:border-blue-400 flex items-center justify-center text-zinc-400 hover:text-blue-500 transition-colors">
               <Plus className="w-4 h-4" />
             </button>
-            {sessions.length > 0 && (
-              <button
-                onClick={handleGoHome}
-                className="p-2 rounded-lg shadow-sm border bg-white/90 border-zinc-200 text-zinc-500 hover:text-zinc-700 hover:bg-white transition-colors"
-                title="All images"
-              >
-                <LayoutGrid className="w-4 h-4" />
-              </button>
-            )}
           </div>
+        )}
+
+        <div className="flex-1 p-4 select-none">
+          {hasImage ? (
+            <div className="h-full relative">
+              <Canvas
+                ref={canvasRef}
+                imageSrc={state.originalImage}
+                params={state.currentParams}
+                backgroundRemovedSrc={bgRemovedSrc}
+                cropMode={cropMode}
+                onCropComplete={handleCropComplete}
+                onCropCancel={() => setCropMode(false)}
+                showOriginal={showOriginal}
+                watermark={watermark}
+                onWatermarkMove={handleWatermarkMove}
+                watermarkSelected={activeTab === "watermark" && !!watermark}
+              />
+              <div className="absolute top-2 right-2 flex items-center gap-1">
+                <button
+                  onMouseDown={() => setShowOriginal(true)}
+                  onMouseUp={() => setShowOriginal(false)}
+                  onMouseLeave={() => setShowOriginal(false)}
+                  className={`p-2 rounded-lg shadow-sm border transition-colors ${showOriginal ? "bg-blue-600 border-blue-600 text-white" : "bg-white/90 border-zinc-200 text-zinc-500 hover:text-zinc-700 hover:bg-white"}`}
+                  title="Hold to see original"
+                >
+                  <Eye className="w-4 h-4" />
+                </button>
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  className="p-2 rounded-lg shadow-sm border bg-white/90 border-zinc-200 text-zinc-500 hover:text-zinc-700 hover:bg-white transition-colors"
+                  title="Add photos"
+                >
+                  <Plus className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          ) : (
+            /* Upload area — replaces canvas when no image loaded */
+            <div
+              className={`h-full flex flex-col items-center justify-center rounded-2xl border-2 border-dashed transition-all duration-200 cursor-pointer ${
+                isDragging
+                  ? "border-blue-400 bg-blue-50 shadow-lg shadow-blue-100"
+                  : "border-zinc-300 bg-white hover:border-blue-400 hover:shadow-md"
+              }`}
+              onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+              onDragLeave={() => setIsDragging(false)}
+              onDrop={handleDrop}
+              onClick={() => fileInputRef.current?.click()}
+            >
+              <div className={`p-3 rounded-xl mb-3 ${isDragging ? "bg-blue-100" : "bg-zinc-100"}`}>
+                <Upload className={`w-7 h-7 ${isDragging ? "text-blue-500" : "text-zinc-400"}`} />
+              </div>
+              <p className="text-base font-medium text-zinc-700">Drop photos here or click to browse</p>
+              <p className="text-sm text-zinc-400 mt-1">PNG, JPG, WebP — select multiple</p>
+            </div>
+          )}
         </div>
       </div>
 
@@ -320,26 +418,26 @@ export function LuminateEditor({
         <GripVertical className="w-3 h-3 text-zinc-300 group-hover:text-blue-400" />
       </div>
 
-      {/* Right sidebar */}
-      <div className="border-l border-zinc-200 bg-white flex flex-col" style={{ width: sidebarWidth }}>
+      {/* Right sidebar — always visible */}
+      <div className="border-l border-zinc-200 bg-white flex flex-col min-w-0 overflow-hidden" style={{ width: sidebarWidth }}>
         <div className="flex items-center justify-between px-4 py-2.5 border-b border-zinc-100">
           <div className="flex items-center gap-0.5">
-            <button onClick={undo} disabled={state.historyIndex <= 0}
+            <button onClick={undo} disabled={state.historyIndex <= 0 || !hasImage}
               className="p-1.5 rounded-md text-zinc-400 hover:text-zinc-600 hover:bg-zinc-100 disabled:text-zinc-300 disabled:cursor-not-allowed transition-colors" title="Undo">
               <Undo2 className="w-4 h-4" />
             </button>
-            <button onClick={redo} disabled={state.historyIndex >= state.history.length - 1}
+            <button onClick={redo} disabled={state.historyIndex >= state.history.length - 1 || !hasImage}
               className="p-1.5 rounded-md text-zinc-400 hover:text-zinc-600 hover:bg-zinc-100 disabled:text-zinc-300 disabled:cursor-not-allowed transition-colors" title="Redo">
               <Redo2 className="w-4 h-4" />
             </button>
             <div className="w-px h-4 bg-zinc-200 mx-1" />
-            <button onClick={handleReset}
-              className="p-1.5 rounded-md text-zinc-400 hover:text-zinc-600 hover:bg-zinc-100 transition-colors" title="Reset all">
+            <button onClick={handleReset} disabled={!hasImage}
+              className="p-1.5 rounded-md text-zinc-400 hover:text-zinc-600 hover:bg-zinc-100 disabled:text-zinc-300 disabled:cursor-not-allowed transition-colors" title="Reset all">
               <RefreshCw className="w-3.5 h-3.5" />
             </button>
           </div>
-          <button onClick={handleExport}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors">
+          <button onClick={handleExport} disabled={!hasImage}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:bg-zinc-200 disabled:text-zinc-400 text-white text-sm font-medium rounded-lg transition-colors">
             <Download className="w-3.5 h-3.5" /> Export
           </button>
         </div>
@@ -354,10 +452,10 @@ export function LuminateEditor({
           ))}
         </div>
 
-        <div className="flex-1 overflow-y-auto">
+        <div className="flex-1 overflow-y-auto min-w-0 flex flex-col">
           {activeTab === "adjust" && (
-            <div className="flex flex-col">
-              <Toolbar params={state.currentParams} onUpdateParams={updateParams} cropMode={cropMode}
+            <div className="flex flex-col flex-1">
+              <Toolbar params={state.currentParams} onUpdateParams={updateParams} disabled={!hasImage} cropMode={cropMode}
                 onToggleCrop={() => setCropMode((v) => !v)} />
               <div className="px-4 pb-4">
                 <BackgroundRemoval imageSrc={state.originalImage} isRemoved={state.backgroundRemoved}
@@ -366,16 +464,18 @@ export function LuminateEditor({
             </div>
           )}
           {activeTab === "watermark" && (
-            <div className="p-4">
-              <WatermarkPanel watermark={watermark} onAdd={handleAddWatermark}
+            <div className="p-4 min-w-0 overflow-hidden">
+              <WatermarkPanel watermark={watermark} onAdd={handleAddWatermark} disabled={!hasImage}
                 onUpdate={handleUpdateWatermark} onRemove={() => setWatermark(null)} />
             </div>
           )}
           {activeTab === "ai" && (
-            <div className="p-4">
-              <AIChat onSubmit={handleAIEdit} onMatchTemplate={handleMatchTemplate}
+            <div className="flex-1 flex flex-col min-h-0 p-4">
+              <AIChat onSubmit={handleAIEdit}
+                onAgentEdit={handleAgentEdit}
                 isProcessing={state.isProcessing} lastExplanation={lastExplanation}
-                lastParams={lastAIParams} previousParams={preAIParams} />
+                lastParams={lastAIParams} previousParams={preAIParams}
+                agentSteps={agentSteps} disabled={!hasImage} />
             </div>
           )}
         </div>

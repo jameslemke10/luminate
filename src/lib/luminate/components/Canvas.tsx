@@ -207,7 +207,7 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(
         const dw = drawWidth * scale, dh = drawHeight * scale;
         ctx.clearRect(0, 0, cw, ch);
         if (showOriginal) {
-          const noEdit: EditParams = { brightness: 0, contrast: 0, saturation: 0, sharpness: 0, warmth: 0, rotation: 0, flipX: false, flipY: false };
+          const noEdit: EditParams = { brightness: 0, contrast: 0, saturation: 0, sharpness: 0, warmth: 0, exposure: 0, highlights: 0, shadows: 0, rotation: 0, flipX: false, flipY: false };
           drawImageWithParams(ctx, img, noEdit, cw, ch, dw, dh);
           ctx.save();
           ctx.font = `bold ${12 * scale}px sans-serif`;
@@ -217,6 +217,7 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(
         } else {
           drawImageWithParams(ctx, img, p, cw, ch, dw, dh);
           drawWatermark(ctx, cw, ch, !!watermarkSelected);
+          applyToneCurve(ctx, cw, ch, p.exposure ?? 0, p.highlights ?? 0, p.shadows ?? 0);
           if (p.sharpness && p.sharpness > 0) applySharpness(ctx, cw, ch, p.sharpness);
         }
       },
@@ -237,6 +238,8 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(
         if (!ctx) return null;
         const cw = offscreen.width, ch = offscreen.height, dw = drawWidth * scale, dh = drawHeight * scale;
         drawImageWithParams(ctx, imageRef.current, params, cw, ch, dw, dh);
+        applyToneCurve(ctx, cw, ch, params.exposure ?? 0, params.highlights ?? 0, params.shadows ?? 0);
+        if (params.sharpness && params.sharpness > 0) applySharpness(ctx, cw, ch, params.sharpness);
         if (watermark) {
           const x = (watermark.xPercent / 100) * cw, y = (watermark.yPercent / 100) * ch;
           ctx.save(); ctx.globalAlpha = watermark.config.opacity;
@@ -506,6 +509,42 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(
     );
   }
 );
+
+function applyToneCurve(
+  ctx: CanvasRenderingContext2D, width: number, height: number,
+  exposure: number, highlights: number, shadows: number
+) {
+  if (exposure === 0 && highlights === 0 && shadows === 0) return;
+  const imageData = ctx.getImageData(0, 0, width, height);
+  const data = imageData.data;
+  // Pre-compute a 256-entry lookup table for speed
+  const lut = new Uint8Array(256);
+  const gamma = exposure !== 0 ? 1 / (1 + exposure / 100) : 1;
+  const hStr = highlights / 200; // -0.5 to 0.5
+  const sStr = shadows / 200;
+  for (let i = 0; i < 256; i++) {
+    let v = i / 255;
+    // Exposure: gamma curve
+    if (gamma !== 1) v = Math.pow(v, gamma);
+    // Highlights: affect upper luminance (smoothly ramp from 0.5 to 1.0)
+    if (hStr !== 0) {
+      const hMask = Math.max(0, (v - 0.5) * 2); // 0 at mid, 1 at white
+      v = v + hStr * hMask * (1 - v); // push toward white or pull back
+    }
+    // Shadows: affect lower luminance (smoothly ramp from 0 to 0.5)
+    if (sStr !== 0) {
+      const sMask = Math.max(0, 1 - v * 2); // 1 at black, 0 at mid
+      v = v + sStr * sMask * v; // push toward mid or pull toward black
+    }
+    lut[i] = Math.max(0, Math.min(255, Math.round(v * 255)));
+  }
+  for (let i = 0; i < data.length; i += 4) {
+    data[i] = lut[data[i]];
+    data[i + 1] = lut[data[i + 1]];
+    data[i + 2] = lut[data[i + 2]];
+  }
+  ctx.putImageData(imageData, 0, 0);
+}
 
 function applySharpness(ctx: CanvasRenderingContext2D, width: number, height: number, amount: number) {
   const strength = amount / 200;
