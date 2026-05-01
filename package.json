@@ -1,12 +1,39 @@
 {
-  "name": "luminate",
+  "name": "@luminate/editor",
   "version": "0.1.0",
-  "private": true,
+  "description": "AI-powered photo editor React component",
+  "main": "dist/index.js",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js"
+    },
+    "./styles.css": "./src/app/globals.css"
+  },
+  "files": [
+    "dist",
+    "src/app/globals.css"
+  ],
+  "sideEffects": false,
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "build:lib": "tsup",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "prepublishOnly": "npm run build:lib"
+  },
+  "peerDependencies": {
+    "react": ">=18",
+    "react-dom": ">=18",
+    "fabric": ">=7",
+    "@imgly/background-removal": ">=1"
+  },
+  "peerDependenciesMeta": {
+    "@imgly/background-removal": { "optional": true }
   },
   "dependencies": {
     "@google/genai": "^1.47.0",
@@ -25,6 +52,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.2.1",
     "tailwindcss": "^4",
+    "tsup": "^8.5.1",
     "typescript": "^5"
   }
 }

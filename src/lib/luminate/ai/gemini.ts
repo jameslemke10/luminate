@@ -1,6 +1,8 @@
 import { GoogleGenAI } from "@google/genai";
 import { AIEditResponse, EditParams } from "../types";
 
+const DEFAULT_MODEL = "gemini-2.5-pro";
+
 const SYSTEM_PROMPT = `You are an AI photo editing assistant for product photography.
 You analyze photos and return structured edit parameters as JSON.
 
@@ -57,7 +59,8 @@ export async function analyzeAndSuggestEdits(
   imageBase64: string,
   mimeType: string,
   instruction: string,
-  apiKey: string
+  apiKey: string,
+  model?: string
 ): Promise<AIEditResponse> {
   const ai = new GoogleGenAI({ apiKey });
 
@@ -66,7 +69,7 @@ export async function analyzeAndSuggestEdits(
     : `Analyze this product photo and suggest optimal edit parameters to make it look professional and listing-ready.`;
 
   const response = await ai.models.generateContent({
-    model: "gemini-2.0-flash",
+    model: model || DEFAULT_MODEL,
     contents: [
       {
         role: "user",
@@ -92,12 +95,13 @@ export async function matchTemplateStyle(
   targetMimeType: string,
   referenceBase64: string,
   referenceMimeType: string,
-  apiKey: string
+  apiKey: string,
+  model?: string
 ): Promise<AIEditResponse> {
   const ai = new GoogleGenAI({ apiKey });
 
   const response = await ai.models.generateContent({
-    model: "gemini-2.0-flash",
+    model: model || DEFAULT_MODEL,
     contents: [
       {
         role: "user",

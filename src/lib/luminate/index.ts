@@ -16,5 +16,6 @@ export type {
   WatermarkConfig,
   LuminateConfig,
   EditorState,
+  Overlay,
 } from "./types";
 export { DEFAULT_EDIT_PARAMS } from "./types";

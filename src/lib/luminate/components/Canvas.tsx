@@ -9,7 +9,7 @@ import {
   useState,
 } from "react";
 import { ZoomIn, ZoomOut } from "lucide-react";
-import { EditParams, WatermarkOverlay } from "../types";
+import { EditParams, WatermarkOverlay, Overlay } from "../types";
 
 interface CropRect {
   x: number;
@@ -29,6 +29,7 @@ interface CanvasProps {
   watermark?: WatermarkOverlay | null;
   onWatermarkMove?: (xPercent: number, yPercent: number) => void;
   watermarkSelected?: boolean;
+  overlays?: Overlay[];
 }
 
 export interface CanvasHandle {
@@ -49,7 +50,7 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(
   function Canvas(
     {
       imageSrc, params, backgroundRemovedSrc, cropMode, onCropComplete, onCropCancel,
-      showOriginal, watermark, onWatermarkMove, watermarkSelected,
+      showOriginal, watermark, onWatermarkMove, watermarkSelected, overlays = [],
     },
     ref
   ) {
@@ -57,6 +58,7 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(
     const imageRef = useRef<HTMLImageElement | null>(null);
     const watermarkImgRef = useRef<HTMLImageElement | null>(null);
     const containerRef = useRef<HTMLDivElement>(null);
+    const overlayImagesRef = useRef<Map<string, HTMLImageElement>>(new Map());
 
     const [mode, setMode] = useState<DragMode>("none");
     const dragStart = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
@@ -83,9 +85,27 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(
       img.src = src;
     }, [imageSrc, backgroundRemovedSrc]); // eslint-disable-line react-hooks/exhaustive-deps
 
+    // Preload image overlays
+    useEffect(() => {
+      const imageOverlays = overlays.filter((o) => o.type === "image" && o.imageBase64);
+      const currentIds = new Set(imageOverlays.map((o) => o.id));
+      for (const id of overlayImagesRef.current.keys()) {
+        if (!currentIds.has(id)) overlayImagesRef.current.delete(id);
+      }
+      for (const o of imageOverlays) {
+        if (overlayImagesRef.current.has(o.id)) continue;
+        const img = new Image();
+        img.onload = () => {
+          overlayImagesRef.current.set(o.id, img);
+          if (imageRef.current) renderCanvas(imageRef.current, params);
+        };
+        img.src = `data:${o.imageMimeType};base64,${o.imageBase64}`;
+      }
+    }, [overlays]); // eslint-disable-line react-hooks/exhaustive-deps
+
     useEffect(() => {
       if (imageRef.current) renderCanvas(imageRef.current, params);
-    }, [params, showOriginal, watermark, watermarkSelected, zoom]); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [params, showOriginal, watermark, watermarkSelected, zoom, overlays]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const getDrawInfo = useCallback((img: HTMLImageElement) => {
       const container = containerRef.current;
@@ -143,6 +163,28 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(
         }
         return null;
       }, [watermark]
+    );
+
+    const drawOverlays = useCallback(
+      (ctx: CanvasRenderingContext2D, cw: number, ch: number) => {
+        for (const o of overlays) {
+          const x = (o.xPercent / 100) * cw;
+          const y = (o.yPercent / 100) * ch;
+          const w = (o.widthPercent / 100) * cw;
+          const h = (o.heightPercent / 100) * ch;
+          ctx.save();
+          ctx.globalAlpha = o.opacity;
+          if (o.type === "rectangle") {
+            ctx.fillStyle = o.color;
+            ctx.fillRect(x, y, w, h);
+          } else if (o.type === "image") {
+            const cached = overlayImagesRef.current.get(o.id);
+            if (cached) ctx.drawImage(cached, x, y, w, h);
+          }
+          ctx.restore();
+        }
+      },
+      [overlays]
     );
 
     const drawWatermark = useCallback(
@@ -217,11 +259,12 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(
         } else {
           drawImageWithParams(ctx, img, p, cw, ch, dw, dh);
           drawWatermark(ctx, cw, ch, !!watermarkSelected);
+          drawOverlays(ctx, cw, ch);
           applyToneCurve(ctx, cw, ch, p.exposure ?? 0, p.highlights ?? 0, p.shadows ?? 0);
           if (p.sharpness && p.sharpness > 0) applySharpness(ctx, cw, ch, p.sharpness);
         }
       },
-      [getDrawInfo, drawImageWithParams, drawWatermark, showOriginal, watermark, watermarkSelected]
+      [getDrawInfo, drawImageWithParams, drawWatermark, drawOverlays, showOriginal, watermark, watermarkSelected]
     );
 
     // Export clean (no bounding box)
@@ -238,6 +281,7 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(
         if (!ctx) return null;
         const cw = offscreen.width, ch = offscreen.height, dw = drawWidth * scale, dh = drawHeight * scale;
         drawImageWithParams(ctx, imageRef.current, params, cw, ch, dw, dh);
+        drawOverlays(ctx, cw, ch);
         applyToneCurve(ctx, cw, ch, params.exposure ?? 0, params.highlights ?? 0, params.shadows ?? 0);
         if (params.sharpness && params.sharpness > 0) applySharpness(ctx, cw, ch, params.sharpness);
         if (watermark) {

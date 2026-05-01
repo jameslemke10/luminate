@@ -15,7 +15,7 @@ import {
   Upload,
 } from "lucide-react";
 import { useEditorState } from "../hooks/useEditorState";
-import { AIEditResponse, EditParams, WatermarkOverlay } from "../types";
+import { AIEditResponse, EditParams, WatermarkOverlay, Overlay } from "../types";
 import { AgentEvent } from "../agent/types";
 import { Canvas, CanvasHandle } from "./Canvas";
 import { Toolbar } from "./Toolbar";
@@ -43,6 +43,7 @@ export function LuminateEditor({
 }: LuminateEditorProps) {
   const canvasRef = useRef<CanvasHandle>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
   const {
     state, setImage, updateParams, setParams, undo, redo, reset, setProcessing, setBackgroundRemoved,
   } = useEditorState();
@@ -62,6 +63,7 @@ export function LuminateEditor({
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
 
   const [agentSteps, setAgentSteps] = useState<AgentEvent[]>([]);
+  const [overlays, setOverlays] = useState<Overlay[]>([]);
   const [sidebarWidth, setSidebarWidth] = useState(400);
   const [isResizing, setIsResizing] = useState(false);
   const resizeRef = useRef<{ startX: number; startWidth: number } | null>(null);
@@ -181,7 +183,7 @@ export function LuminateEditor({
   );
 
   const handleAIEdit = useCallback(
-    async (instruction: string) => {
+    async (instruction: string, model: string) => {
       if (!state.originalImage) return;
       setProcessing(true); setLastExplanation(undefined);
       setPreAIParams({ ...state.currentParams }); setLastAIParams(null);
@@ -189,7 +191,7 @@ export function LuminateEditor({
         const match = state.originalImage.match(/^data:(image\/\w+);base64,(.+)$/);
         if (!match) throw new Error("Invalid image data");
         const [, mimeType, imageBase64] = match;
-        const res = await fetch(apiEndpoint, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ imageBase64, mimeType, instruction }) });
+        const res = await fetch(apiEndpoint, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ imageBase64, mimeType, instruction, model }) });
         if (!res.ok) { const err = await res.json(); throw new Error(err.error || "AI request failed"); }
         const result: AIEditResponse = await res.json();
         setParams(result.params); setLastAIParams(result.params); setLastExplanation(result.explanation);
@@ -201,8 +203,12 @@ export function LuminateEditor({
   );
 
   const handleAgentEdit = useCallback(
-    async (instruction: string, logoBase64?: string, logoMimeType?: string) => {
+    async (instruction: string, model: string, logoBase64?: string, logoMimeType?: string) => {
       if (!state.originalImage) return;
+      abortRef.current?.abort();
+      const controller = new AbortController();
+      abortRef.current = controller;
+
       setProcessing(true);
       setAgentSteps([]);
       setLastExplanation(undefined);
@@ -218,10 +224,11 @@ export function LuminateEditor({
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            imageBase64, mimeType, instruction,
+            imageBase64, mimeType, instruction, model,
             currentParams: state.currentParams,
             logoImageBase64: logoBase64, logoMimeType,
           }),
+          signal: controller.signal,
         });
 
         if (!res.ok) {
@@ -236,6 +243,10 @@ export function LuminateEditor({
         let buffer = "";
 
         while (true) {
+          if (controller.signal.aborted) {
+            reader.cancel();
+            break;
+          }
           const { done, value } = await reader.read();
           if (done) break;
 
@@ -254,15 +265,8 @@ export function LuminateEditor({
                 setParams(event.currentParams);
                 setLastAIParams(event.currentParams);
               }
-              if (event.type === "logo_update" && event.logoPlacement) {
-                const lp = event.logoPlacement;
-                setWatermark({
-                  config: {
-                    imageUrl: `data:${lp.mimeType};base64,${lp.imageBase64}`,
-                    opacity: lp.opacity, scale: lp.scale,
-                  },
-                  xPercent: lp.xPercent, yPercent: lp.yPercent,
-                });
+              if (event.type === "overlays_update" && event.overlays) {
+                setOverlays(event.overlays);
               }
               if (event.type === "complete") setLastExplanation(event.explanation);
               if (event.type === "error") setLastExplanation(`Error: ${event.error}`);
@@ -270,14 +274,24 @@ export function LuminateEditor({
           }
         }
       } catch (error) {
-        setLastExplanation(`Error: ${error instanceof Error ? error.message : "Failed"}`);
-        setAgentSteps((prev) => [...prev, { type: "error", error: error instanceof Error ? error.message : "Failed" }]);
+        if ((error as Error).name === "AbortError") {
+          setAgentSteps((prev) => [...prev, { type: "complete", explanation: "Stopped by user." }]);
+          setLastExplanation("Stopped by user.");
+        } else {
+          setLastExplanation(`Error: ${error instanceof Error ? error.message : "Failed"}`);
+          setAgentSteps((prev) => [...prev, { type: "error", error: error instanceof Error ? error.message : "Failed" }]);
+        }
       } finally {
         setProcessing(false);
+        abortRef.current = null;
       }
     },
     [state.originalImage, state.currentParams, setParams, setProcessing]
   );
+
+  const handleStop = useCallback(() => {
+    abortRef.current?.abort();
+  }, []);
 
   const handleExport = useCallback(() => {
     const dataUrl = canvasRef.current?.exportImage();
@@ -369,6 +383,7 @@ export function LuminateEditor({
                 watermark={watermark}
                 onWatermarkMove={handleWatermarkMove}
                 watermarkSelected={activeTab === "watermark" && !!watermark}
+                overlays={overlays}
               />
               <div className="absolute top-2 right-2 flex items-center gap-1">
                 <button
@@ -473,9 +488,10 @@ export function LuminateEditor({
             <div className="flex-1 flex flex-col min-h-0 p-4">
               <AIChat onSubmit={handleAIEdit}
                 onAgentEdit={handleAgentEdit}
+                onStop={handleStop}
                 isProcessing={state.isProcessing} lastExplanation={lastExplanation}
                 lastParams={lastAIParams} previousParams={preAIParams}
-                agentSteps={agentSteps} disabled={!hasImage} />
+                agentSteps={agentSteps} hasImage={hasImage} />
             </div>
           )}
         </div>

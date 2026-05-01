@@ -1,4 +1,4 @@
-import { EditParams, LogoPlacement } from "../types";
+import { EditParams, Overlay } from "../types";
 
 export interface ToolParam {
   type: "number" | "string" | "boolean";
@@ -15,12 +15,15 @@ export interface ToolContext {
   currentParams: EditParams;
   logoImageBase64?: string;
   logoMimeType?: string;
+  overlays: Overlay[];
 }
 
 export interface ToolResult {
   success: boolean;
   paramUpdates?: Partial<EditParams>;
-  logoPlacement?: LogoPlacement;
+  overlayAdd?: Overlay;
+  overlayRemoveId?: string;
+  includeImage?: boolean;
   description: string;
 }
 

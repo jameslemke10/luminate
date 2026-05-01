@@ -68,13 +68,16 @@ export const DEFAULT_EDIT_PARAMS: EditParams = {
   flipY: false,
 };
 
-// Logo placement for the agent's add_logo tool
-export interface LogoPlacement {
-  imageBase64: string;
-  mimeType: string;
-  position: "top-left" | "top-right" | "bottom-left" | "bottom-right" | "center";
-  xPercent: number;
-  yPercent: number;
-  scale: number; // 0.03 to 0.5
-  opacity: number; // 0 to 1
+// Generic overlay layer
+export interface Overlay {
+  id: string;
+  type: "rectangle" | "image";
+  xPercent: number;      // 0-100, top-left corner
+  yPercent: number;      // 0-100, top-left corner
+  widthPercent: number;  // 0-100, size relative to image
+  heightPercent: number; // 0-100, size relative to image
+  color: string;         // hex color e.g. "#ffffff"
+  opacity: number;       // 0-1
+  imageBase64?: string;  // for image overlays
+  imageMimeType?: string;
 }

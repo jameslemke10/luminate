@@ -1,32 +1,37 @@
-import { EditParams, LogoPlacement } from "../types";
+import { EditParams, Overlay } from "../types";
 
 export interface AgentRequest {
   imageBase64: string;
   mimeType: string;
   instruction: string;
   currentParams: EditParams;
+  model?: string;
   logoImageBase64?: string;
   logoMimeType?: string;
-  maxIterations?: number; // default 3
+  maxIterations?: number;
+}
+
+export interface ToolCallResult {
+  toolName: string;
+  toolArgs: Record<string, unknown>;
+  description: string;
+  success: boolean;
 }
 
 export type AgentEventType =
   | "thinking"
-  | "tool_call"
-  | "tool_result"
+  | "tool_batch"
   | "params_update"
-  | "logo_update"
+  | "overlays_update"
   | "complete"
   | "error";
 
 export interface AgentEvent {
   type: AgentEventType;
-  toolName?: string;
-  toolArgs?: Record<string, unknown>;
-  description?: string;
   reasoning?: string;
+  tools?: ToolCallResult[];
   currentParams?: EditParams;
-  logoPlacement?: LogoPlacement;
+  overlays?: Overlay[];
   explanation?: string;
   error?: string;
 }

@@ -1,37 +1,48 @@
+import { Overlay } from "../types";
 import { ToolDefinition } from "./types";
 
 function clamp(val: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, val));
 }
 
-const POSITION_COORDS: Record<string, { xPercent: number; yPercent: number }> = {
-  "top-left": { xPercent: 3, yPercent: 3 },
-  "top-right": { xPercent: 85, yPercent: 3 },
-  "bottom-left": { xPercent: 3, yPercent: 90 },
-  "bottom-right": { xPercent: 85, yPercent: 90 },
-  "center": { xPercent: 42, yPercent: 42 },
-};
-
-export const addLogo: ToolDefinition = {
-  name: "add_logo",
-  description: "Place the user's pre-uploaded logo on the image at a specified position. The logo must be uploaded by the user before calling this tool.",
+export const addImage: ToolDefinition = {
+  name: "add_image",
+  description:
+    "Place the user's attached image file on the photo at a specific position and size. Position and size are in percentages of the image dimensions (0-100). Can be called multiple times to place the image at different positions.",
   parameters: {
-    position: {
-      type: "string",
-      description: "Where to place the logo on the image",
-      enum: ["top-left", "top-right", "bottom-left", "bottom-right", "center"],
+    x: {
+      type: "number",
+      description:
+        "X position of the image's top-left corner as a percentage of image width (0 = left edge, 100 = right edge)",
+      minimum: 0,
+      maximum: 100,
       required: true,
     },
-    scale: {
+    y: {
       type: "number",
-      description: "Logo size as a fraction of image width (0.03 = tiny, 0.15 = medium, 0.5 = large)",
-      minimum: 0.03,
-      maximum: 0.5,
+      description:
+        "Y position of the image's top-left corner as a percentage of image height (0 = top edge, 100 = bottom edge)",
+      minimum: 0,
+      maximum: 100,
+      required: true,
+    },
+    width: {
+      type: "number",
+      description: "Width of the placed image as a percentage of the photo width",
+      minimum: 0.5,
+      maximum: 100,
+      required: true,
+    },
+    height: {
+      type: "number",
+      description: "Height of the placed image as a percentage of the photo height",
+      minimum: 0.5,
+      maximum: 100,
       required: true,
     },
     opacity: {
       type: "number",
-      description: "Logo opacity from 0 (invisible) to 1 (fully opaque). Use 0.8-1.0 for a professional look.",
+      description: "Opacity from 0 (transparent) to 1 (fully opaque)",
       minimum: 0,
       maximum: 1,
       required: true,
@@ -39,26 +50,30 @@ export const addLogo: ToolDefinition = {
   },
   execute: async (ctx, args) => {
     if (!ctx.logoImageBase64 || !ctx.logoMimeType) {
-      return { success: false, description: "No logo image uploaded. Please upload a logo first." };
+      return {
+        success: false,
+        description:
+          "No image file attached. The user must attach an image file in the chat before this tool can be used.",
+      };
     }
 
-    const position = (args.position as string) || "top-left";
-    const scale = clamp(args.scale as number, 0.03, 0.5);
-    const opacity = clamp(args.opacity as number, 0, 1);
-    const coords = POSITION_COORDS[position] ?? POSITION_COORDS["top-left"];
+    const overlay: Overlay = {
+      id: crypto.randomUUID(),
+      type: "image",
+      xPercent: clamp(args.x as number, 0, 100),
+      yPercent: clamp(args.y as number, 0, 100),
+      widthPercent: clamp(args.width as number, 0.5, 100),
+      heightPercent: clamp(args.height as number, 0.5, 100),
+      color: "",
+      opacity: clamp(args.opacity as number, 0, 1),
+      imageBase64: ctx.logoImageBase64,
+      imageMimeType: ctx.logoMimeType,
+    };
 
     return {
       success: true,
-      logoPlacement: {
-        imageBase64: ctx.logoImageBase64,
-        mimeType: ctx.logoMimeType,
-        position: position as "top-left" | "top-right" | "bottom-left" | "bottom-right" | "center",
-        xPercent: coords.xPercent,
-        yPercent: coords.yPercent,
-        scale,
-        opacity,
-      },
-      description: `Placed logo at ${position} with ${Math.round(scale * 100)}% size and ${Math.round(opacity * 100)}% opacity`,
+      overlayAdd: overlay,
+      description: `Placed image at (${overlay.xPercent.toFixed(1)}%, ${overlay.yPercent.toFixed(1)}%) size ${overlay.widthPercent.toFixed(1)}%x${overlay.heightPercent.toFixed(1)}% opacity ${Math.round(overlay.opacity * 100)}%`,
     };
   },
 };

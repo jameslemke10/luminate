@@ -15,7 +15,7 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json();
-    const { imageBase64, mimeType, instruction, referenceBase64, referenceMimeType } = body;
+    const { imageBase64, mimeType, instruction, referenceBase64, referenceMimeType, model } = body;
 
     if (!imageBase64 || !mimeType) {
       return NextResponse.json(
@@ -31,7 +31,8 @@ export async function POST(request: NextRequest) {
         mimeType,
         referenceBase64,
         referenceMimeType,
-        apiKey
+        apiKey,
+        model
       );
       return NextResponse.json(result);
     }
@@ -41,7 +42,8 @@ export async function POST(request: NextRequest) {
       imageBase64,
       mimeType,
       instruction || "",
-      apiKey
+      apiKey,
+      model
     );
 
     return NextResponse.json(result);

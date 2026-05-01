@@ -1,109 +1,133 @@
 "use client";
 
-import { Wrench, CheckCircle, AlertCircle, Brain, Loader2 } from "lucide-react";
-import { AgentEvent } from "../agent/types";
+import { AlertCircle } from "lucide-react";
+import { AgentEvent, ToolCallResult } from "../agent/types";
 
 interface AgentStepIndicatorProps {
   steps: AgentEvent[];
+  aiResponse?: string;
 }
 
-function StepRow({ icon, children, muted }: { icon: React.ReactNode; children: React.ReactNode; muted?: boolean }) {
+function formatArgs(args: Record<string, unknown>): string {
+  return Object.entries(args)
+    .map(([k, v]) => `${k}: ${typeof v === "number" ? (Number.isInteger(v) ? v : (v as number).toFixed(1)) : v}`)
+    .join(", ");
+}
+
+function TimelineNode({
+  dotClass,
+  isLast,
+  children,
+}: {
+  dotClass: string;
+  isLast: boolean;
+  children: React.ReactNode;
+}) {
   return (
-    <div className={`flex items-start gap-2 text-xs ${muted ? "text-zinc-400" : "text-zinc-600"}`}>
-      <span className="mt-0.5 shrink-0">{icon}</span>
-      <span className="min-w-0 break-words">{children}</span>
+    <div className="relative pl-5 pb-0.5">
+      {!isLast && (
+        <div className="absolute left-[4.5px] top-3 bottom-0 w-px bg-zinc-200" />
+      )}
+      <div className={`absolute left-[2px] top-[6px] w-[7px] h-[7px] rounded-full ${dotClass}`} />
+      <div className="min-w-0">{children}</div>
     </div>
   );
 }
 
-export function AgentStepIndicator({ steps }: AgentStepIndicatorProps) {
+function ToolNode({ tool }: { tool: ToolCallResult }) {
+  return (
+    <span className="text-xs text-zinc-500 break-words">
+      <span className="font-medium text-zinc-700">{tool.toolName}</span>
+      <span className="text-zinc-400">({formatArgs(tool.toolArgs)})</span>
+      <span className="text-zinc-400"> — {tool.description}</span>
+    </span>
+  );
+}
+
+export function AgentStepIndicator({ steps, aiResponse }: AgentStepIndicatorProps) {
   if (steps.length === 0) return null;
 
-  // Group into meaningful display items: merge tool_call + tool_result pairs,
-  // skip noisy params_update/logo_update, promote complete/error
-  const items: { key: number; node: React.ReactNode }[] = [];
+  const items: { key: number; node: React.ReactNode; dotClass: string }[] = [];
   let i = 0;
 
   while (i < steps.length) {
     const step = steps[i];
 
     if (step.type === "thinking") {
+      const isLastStep = i === steps.length - 1 && !aiResponse;
       items.push({
         key: i,
+        dotClass: isLastStep
+          ? "bg-blue-400 ring-2 ring-blue-100 animate-pulse"
+          : "bg-zinc-300",
         node: (
-          <StepRow icon={<Brain className="w-3.5 h-3.5 text-blue-500" />}>
+          <span className={`text-xs ${isLastStep ? "text-zinc-500" : "text-zinc-400"}`}>
             {step.reasoning}
-          </StepRow>
+          </span>
         ),
       });
       i++;
-    } else if (step.type === "tool_call") {
-      // Look ahead for the matching tool_result
-      const resultStep = i + 1 < steps.length && steps[i + 1].type === "tool_result" ? steps[i + 1] : null;
-      const args = Object.entries(step.toolArgs ?? {})
-        .map(([k, v]) => `${k}: ${typeof v === "number" ? (Number.isInteger(v) ? v : (v as number).toFixed(1)) : v}`)
-        .join(", ");
-      items.push({
-        key: i,
-        node: (
-          <StepRow icon={<Wrench className="w-3.5 h-3.5 text-amber-500" />}>
-            <span className="font-medium text-zinc-700">{step.toolName}</span>
-            <span className="text-zinc-400 ml-1">({args})</span>
-            {resultStep && (
-              <span className="text-zinc-400 ml-1">— {resultStep.description}</span>
-            )}
-          </StepRow>
-        ),
-      });
-      i += resultStep ? 2 : 1;
-    } else if (step.type === "tool_result") {
-      // Orphan result (shouldn't happen often, but handle it)
-      items.push({
-        key: i,
-        node: (
-          <StepRow icon={<CheckCircle className="w-3.5 h-3.5 text-green-500" />} muted>
-            {step.description}
-          </StepRow>
-        ),
-      });
-      i++;
-    } else if (step.type === "params_update" || step.type === "logo_update") {
-      // Skip these — the tool_call/result already describes what happened
+    } else if (step.type === "tool_batch") {
+      const tools = step.tools ?? [];
+      for (let t = 0; t < tools.length; t++) {
+        items.push({
+          key: i * 100 + t,
+          dotClass: "bg-amber-400",
+          node: <ToolNode tool={tools[t]} />,
+        });
+      }
       i++;
     } else if (step.type === "error") {
       items.push({
         key: i,
+        dotClass: "bg-red-400",
         node: (
-          <StepRow icon={<AlertCircle className="w-3.5 h-3.5 text-red-500" />}>
+          <div className="flex items-start gap-1.5 text-xs">
+            <AlertCircle className="w-3.5 h-3.5 text-red-500 shrink-0" />
             <span className="text-red-600">{step.error}</span>
-          </StepRow>
+          </div>
         ),
       });
-      i++;
-    } else if (step.type === "complete") {
-      // Skip — the AI response is rendered separately in the chat
       i++;
     } else {
       i++;
     }
   }
 
-  // If the last visible step is a tool call/result (no complete yet), show a spinner
+  if (aiResponse) {
+    items.push({
+      key: -1,
+      dotClass: "bg-zinc-400",
+      node: <p className="text-sm text-zinc-700 leading-relaxed">{aiResponse}</p>,
+    });
+  }
+
   const lastStep = steps[steps.length - 1];
-  const stillWorking = lastStep.type !== "complete" && lastStep.type !== "error";
+  const stillWorking =
+    !aiResponse &&
+    lastStep.type !== "complete" &&
+    lastStep.type !== "error" &&
+    lastStep.type !== "thinking";
+
+  if (stillWorking) {
+    items.push({
+      key: -2,
+      dotClass: "bg-zinc-300 ring-2 ring-zinc-100 animate-pulse",
+      node: <span className="text-xs text-zinc-400">Working...</span>,
+    });
+  }
 
   return (
-    <div className="flex flex-col gap-1.5 py-1 pl-1 border-l-2 border-zinc-200">
-      {items.map(({ key, node }) => (
-        <div key={key} className="pl-2">{node}</div>
+    <div className="flex flex-col gap-1">
+      {items.map(({ key, node, dotClass }, idx) => (
+        <TimelineNode
+          key={key}
+          dotClass={dotClass}
+          isLast={idx === items.length - 1}
+        >
+          {node}
+        </TimelineNode>
       ))}
-      {stillWorking && (
-        <div className="pl-2">
-          <StepRow icon={<Loader2 className="w-3.5 h-3.5 text-zinc-400 animate-spin" />} muted>
-            Working...
-          </StepRow>
-        </div>
-      )}
     </div>
   );
 }

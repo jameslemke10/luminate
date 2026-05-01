@@ -3,7 +3,8 @@ import { createToolRegistry, toGeminiFunctionDeclarations } from "./registry";
 import { adjustBrightness, adjustContrast, adjustSaturation, adjustSharpness, adjustWarmth } from "./adjust";
 import { adjustExposure, adjustHighlights, adjustShadows } from "./tone";
 import { rotate, crop, flip } from "./transform";
-import { addLogo } from "./add-logo";
+import { addImage } from "./add-logo";
+import { addRectangle, removeOverlay, listOverlays, viewImage } from "./overlays";
 
 export type { ToolDefinition, ToolParam, ToolContext, ToolResult } from "./types";
 export { createToolRegistry, toGeminiFunctionDeclarations } from "./registry";
@@ -20,7 +21,11 @@ const ALL_TOOLS: ToolDefinition[] = [
   rotate,
   crop,
   flip,
-  addLogo,
+  addImage,
+  addRectangle,
+  removeOverlay,
+  listOverlays,
+  viewImage,
 ];
 
 export function getDefaultToolRegistry() {
