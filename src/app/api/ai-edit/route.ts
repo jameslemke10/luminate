@@ -2,9 +2,13 @@ import {
   analyzeAndSuggestEdits,
   matchTemplateStyle,
 } from "@/lib/luminate/ai/gemini";
+import { checkRateLimit } from "@/lib/luminate/server/rate-limit";
 import { NextRequest, NextResponse } from "next/server";
 
 export async function POST(request: NextRequest) {
+  const rateLimited = checkRateLimit(request);
+  if (rateLimited) return rateLimited;
+
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey || apiKey === "your_gemini_api_key_here") {
     return NextResponse.json(
